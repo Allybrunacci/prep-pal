@@ -4,9 +4,9 @@
 const PREP_TIMES = [[60, '1 h'], [90, '1½ h'], [120, '2 h'], [150, '2½ h'], [180, '3 h'], [0, 'No limit']];
 const ceil5 = n => Math.ceil(n / 5) * 5;
 function suggestBudget() {
-  const days = 7 - (S.wk.cheat >= 0 ? 1 : 0);
+  const days = plannedDays(S.wk).length;
   const kcal = dailyTargets(S.prof).kcal * (S.wk.share / 100) * days;
-  return clamp(ceil5(kcal * 0.0042), 20, 300);
+  return clamp(ceil5(kcal * 0.0042), 15, 300);
 }
 
 /* ---------- shared form pieces ---------- */
@@ -23,9 +23,14 @@ function profileFields(p) {
 
 function weekFields() {
   const w = S.wk;
+  const n = plannedDays(w).length;
   return `<div class="field"><span>Prep day</span>${seg([[6, 'Sunday'], [5, 'Saturday']], w.prep, 'prep')}</div>
+    <div class="field"><span>Days you want meals for</span>
+      <div class="chips" role="group" aria-label="Days you want meals for">${DAYS.map((d, i) => (i === w.cheat
+        ? `<button type="button" class="chip cheat" disabled title="Cheat day">${d} ${icon('pizza')}</button>`
+        : `<button type="button" class="chip${w.days.includes(i) ? ' on' : ''}" aria-pressed="${w.days.includes(i)}" data-act="pday" data-v="${i}">${d}</button>`)).join('')}</div>
+      <small class="field-note">${n === 1 ? 'Each recipe makes 1 serve' : `Breakfast, lunch and a snack for ${weekdaysLabel(plannedDays(w))} — each recipe makes ${n} serves`}, all cooked on prep day.</small></div>
     <div class="field"><span>Cheat day — nothing planned</span>${chipRow([...DAYS.map((d, i) => [i, d]), [-1, 'None']], w.cheat, 'cheat', 'Cheat day')}</div>
-    <div class="field-inline"><span><b>Lunches to prep</b><small>One batch for the days after prep day</small></span>${stepper('lunches', w.lunches, 'Lunches to prep')}</div>
     <div class="field"><span>Longest prep session</span>${chipRow(PREP_TIMES, w.maxPrep, 'maxPrep', 'Longest prep session')}</div>`;
 }
 
@@ -41,14 +46,25 @@ const FORM_ACT = {
   act: a => { S.prof.act = a.dataset.v; },
   goal: a => { S.prof.goal = a.dataset.v; },
   prep: a => { S.wk.prep = +a.dataset.v; UI.week = null; },
-  cheat: a => { S.wk.cheat = +a.dataset.v; },
+  pday: a => {
+    const i = +a.dataset.v, days = S.wk.days;
+    if (!days.includes(i)) { S.wk.days = days.concat(i).sort((x, y) => x - y); return; }
+    const next = days.filter(x => x !== i);
+    if (plannedDays({ ...S.wk, days: next }).length) S.wk.days = next;
+    else toast('Keep at least one day with meals.');
+  },
+  cheat: a => {
+    const c = +a.dataset.v;
+    if (plannedDays({ ...S.wk, cheat: c }).length) S.wk.cheat = c;
+    else toast('That’s your only meal day — pick another meal day first.');
+  },
   maxPrep: a => { S.wk.maxPrep = +a.dataset.v; },
   bVar: a => { S.wk.bVar = +a.dataset.v; },
+  lVar: a => { S.wk.lVar = +a.dataset.v; },
   sVar: a => { S.wk.sVar = +a.dataset.v; },
 };
 
 function stepField(name, d) {
-  if (name === 'lunches') S.wk.lunches = clamp(S.wk.lunches + d, 2, 5);
   if (name === 'budget') S.budget = clamp(S.budget + d * 5, 15, 400);
   if (name === 'share') S.wk.share = clamp(S.wk.share + d * 5, 40, 90);
 }
@@ -102,7 +118,7 @@ function drawOnboarding() {
   if (OB.step === 0) {
     body = `<div class="ob-hero"><img src="icons/icon.svg" alt="" width="96" height="96"><h1>Prep Pal</h1><p class="lead">Cook once, eat well all week.</p></div>
       <ul class="ob-points">
-        <li>${icon('chef')}<span><b>Meal prep made simple.</b> Breakfasts, lunches and a snack for every day except your cheat day — all made ahead.</span></li>
+        <li>${icon('chef')}<span><b>Meal prep made simple.</b> Breakfast, lunch and a snack for the days you choose, all cooked in one go on prep day.</span></li>
         <li>${icon('clock')}<span><b>Pick meals by time.</b> See how long each one takes and keep prep day short.</span></li>
         <li>${icon('target')}<span><b>Hit your nutrient goals</b> across the week, sized to your body and training.</span></li>
         <li>${icon('cart')}<span><b>On budget,</b> with the shopping list done for you in aisle order.</span></li>
@@ -152,8 +168,10 @@ function openSettings() {
     return `${sheetHead('Settings', `Prep Pal ${APP_VERSION}`)}
       <h3 class="sh-title">About you</h3>${profileFields(S.prof)}
       <h3 class="sh-title">Your week</h3>${weekFields()}
-      <div class="field"><span>Breakfasts each week</span>${seg([[1, 'One recipe'], [2, 'Two recipes']], S.wk.bVar, 'bVar', 'small')}</div>
-      <div class="field"><span>Snacks each week</span>${seg([[1, 'One recipe'], [2, 'Two recipes']], S.wk.sVar, 'sVar', 'small')}</div>
+      <div class="field"><span>Recipes for each meal <small>— one recipe makes every serve; two split the days in half</small></span></div>
+      <div class="field-inline tight"><span><b>Breakfast</b></span>${seg([[1, 'One'], [2, 'Two']], S.wk.bVar, 'bVar', 'small mini')}</div>
+      <div class="field-inline tight"><span><b>Lunch</b></span>${seg([[1, 'One'], [2, 'Two']], S.wk.lVar, 'lVar', 'small mini')}</div>
+      <div class="field-inline tight"><span><b>Snack</b></span>${seg([[1, 'One'], [2, 'Two']], S.wk.sVar, 'sVar', 'small mini')}</div>
       <div class="field-inline"><span><b>Share of your day</b><small>How much of each day’s food these meals cover (dinner isn’t planned)</small></span>${stepper('share', `${S.wk.share}%`, 'Share of your day')}</div>
       <h3 class="sh-title">Budget</h3>
       <div class="field-inline"><span><b>Weekly budget</b><small>Suggested ${money0(sug)} from your energy needs</small></span>${stepper('budget', money0(S.budget), 'Weekly budget')}</div>
@@ -234,6 +252,7 @@ function importBackup(file) {
       const d = JSON.parse(rd.result);
       if (!d || typeof d !== 'object' || !d.prof || !d.wk) throw new Error('not a backup');
       replaceState(migrate(d));
+      if (UPGRADED) { UPGRADED = false; upgradePlans(); }
       save();
       closeSheet(true);
       UI.week = null;

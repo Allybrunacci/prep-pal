@@ -1,7 +1,7 @@
 /* Prep Pal — Week: today, the prep-day plan, this week's meals and swapping recipes. */
 'use strict';
 
-const GROUP_ORDER = ['L1', 'L2', 'B1', 'B2', 'S1', 'S2'];
+const GROUP_ORDER = ['B1', 'B2', 'L1', 'L2', 'S1', 'S2'];
 const TIME_CHIPS = [[0, 'Any time'], [10, '≤ 10 min'], [20, '≤ 20 min'], [30, '≤ 30 min'], [45, '≤ 45 min'], [60, '≤ 1 hr']];
 const mealIcon = t => icon(MEALS[t].icon);
 
@@ -33,12 +33,18 @@ function storageLine(k, outs) {
 
 const srcChip = src => (src === 'freezer' || src === 'frozen' ? `<span class="src frz">${icon('snow')}Freezer</span>` : src === 'fridge' ? `<span class="src">${icon('fridge')}Fridge</span>` : src === 'pantry' ? `<span class="src">${icon('bag')}Pantry</span>` : `<span class="src fresh">${icon('chef')}Fresh</span>`);
 
-function servingLine(ctx, rid) {
-  const m = portion(ctx, rid);
-  return `${m === 1 ? '1 serve' : `${frac(m)}× serve`} · ${fmtNum(RK[rid] * m)} kcal · ${fmtNum(RN[rid][NI.prot] * m)} g protein`;
-}
-
 const atText = (k, at) => (at === -1 ? `${DAYS_LONG[dayIdx(addDays(k, -1))]} night` : `${DAYS_LONG[dayIdx(addDays(k, at))]} night`);
+
+// Shown instead of a plan when a week has no meal days, or hasn't been planned.
+function emptyWeek(nav, k) {
+  if (!weekCtx(k).gd.P.length) {
+    return `${nav}<section class="card empty-state"><h2>No meal days this week</h2>
+      <p class="sub">${plannedDays(S.wk).length ? 'You’re away on every meal day.' : 'Choose the days you want meals for in Settings.'}</p>
+      <button type="button" class="btn" data-action="settings">${icon('gear')}Settings</button></section>`;
+  }
+  return `${nav}<section class="card empty-state"><h2>No plan for this week</h2><p class="sub">Past weeks aren’t planned automatically.</p>
+    <button type="button" class="btn" data-act="plan">${icon('spark')}Plan this week</button></section>`;
+}
 
 function jobsHtml(k, jobs) {
   return jobs.map(j => (j.kind === 'thaw'
@@ -53,6 +59,8 @@ function todayCard(k) {
   const jobs = eveningJobs(k, o);
   let body;
   if (day.cheat) body = `<p class="today-cheat">${icon('pizza')} Cheat day — nothing planned. Enjoy it!</p>`;
+  else if (!day.want && o === 0) body = `<p class="today-cheat">${icon('chef')} Prep day — cook this week’s meals (about ${fmtMins(weekEval(k).tm.prep)}).</p>`;
+  else if (!day.want) body = '<p class="today-cheat">Nothing planned today — eat whatever you like.</p>';
   else if (day.skip) body = '<p class="sub">You marked today as away.</p>';
   else {
     body = `<ul class="today-list">${meals.map(m => `<li><button type="button" class="today-row" data-act="recipe" data-rid="${m.b.rid}">
@@ -85,12 +93,15 @@ function mealCard(k, ctx, ev, gid) {
   const rid = weekRead(k).g[gid];
   const r = RBY[rid];
   const t = GROUPS[gid].t;
-  const label = `${t === 'l' && gid === 'L1' ? 'Prep lunches' : MEALS[t].name} · ${daysLabel(k, offs)}`;
+  const label = `${MEALS[t].name} · ${daysLabel(k, offs)}`;
   if (!r) return `<button type="button" class="meal-card empty" data-act="meal" data-g="${gid}"><span class="mc-emoji">${icon('plus')}</span><span class="mc-main"><small>${label}</small><b>Choose a recipe</b></span></button>`;
-  const cost = sum(RING[rid].map(([f, g]) => (stapleFree(f) ? 0 : g * unitPrice(f)))) * portion(ctx, rid);
+  const m = portion(ctx, rid);
+  const cost = sum(RING[rid].map(([f, g]) => (stapleFree(f) ? 0 : g * unitPrice(f)))) * m;
   return `<button type="button" class="meal-card" data-act="meal" data-g="${gid}">
     <span class="mc-emoji" aria-hidden="true">${r.e}</span>
-    <span class="mc-main"><small>${label}</small><b>${esc(r.n)}</b><span class="mc-meta">${servingLine(ctx, rid)} · ${money(cost)} a serve</span>${allowed(r) ? '' : '<span class="mc-warn">Doesn’t fit your diet settings — tap to swap</span>'}</span>
+    <span class="mc-main"><small>${label}</small><b>${esc(r.n)}</b>
+      <span class="mc-meta">${plural(offs.length, 'serve')} · each ${fmtNum(RK[rid] * m)} kcal, ${fmtNum(RN[rid][NI.prot] * m)} g protein, ${money(cost)}</span>
+      ${allowed(r) ? '' : '<span class="mc-warn">Doesn’t fit your diet settings — tap to swap</span>'}</span>
     ${weekRead(k).lock[gid] ? `<span class="mc-lock" title="Locked in">${icon('lock')}</span>` : ''}${icon('chev-r', 'mc-chev')}
   </button>`;
 }
@@ -98,8 +109,11 @@ function mealCard(k, ctx, ev, gid) {
 function glance(k, ev) {
   const ctx = weekCtx(k);
   return `<div class="glance">${ctx.days.map(d => {
-    if (d.cheat) return `<button type="button" class="g-day cheat" data-act="day" data-o="${d.o}"><span class="g-name">${DAYS[d.di]}</span><span class="g-cheat">${icon('pizza')}Cheat day</span></button>`;
-    if (d.skip) return `<button type="button" class="g-day away" data-act="day" data-o="${d.o}"><span class="g-name">${DAYS[d.di]}</span><span class="g-cheat">Away</span></button>`;
+    const name = `<span class="g-name">${DAYS[d.di]}</span>`;
+    if (d.cheat) return `<button type="button" class="g-day cheat" data-act="day" data-o="${d.o}">${name}<span class="g-cheat">${icon('pizza')}Cheat day</span></button>`;
+    if (!d.want && d.o === 0) return `<button type="button" class="g-day off prep" data-act="day" data-o="${d.o}">${name}<span class="g-cheat">${icon('chef')}Prep day</span></button>`;
+    if (!d.want) return `<button type="button" class="g-day off" data-act="day" data-o="${d.o}">${name}<span class="g-cheat">Not planned</span></button>`;
+    if (d.skip) return `<button type="button" class="g-day away" data-act="day" data-o="${d.o}">${name}<span class="g-cheat">Away</span></button>`;
     const { meals } = dayMeals(k, d.o);
     return `<button type="button" class="g-day${d.key === today() ? ' now' : ''}" data-act="day" data-o="${d.o}"><span class="g-name">${DAYS[d.di]}${d.o === 0 ? '<i>prep</i>' : ''}</span>
       <span class="g-meals">${meals.map(m => `<span class="g-meal${m.s.src === 'freezer' || m.s.src === 'frozen' ? ' frz' : ''}" title="${esc(m.b.r.n)}">${m.b.r.e}</span>`).join('')}</span></button>`;
@@ -112,16 +126,9 @@ VIEWS.week = {
     const k = viewWeek();
     ensurePlan(k);
     const nav = weekNav(k);
-    if (!planned(k)) {
-      return `${nav}<section class="card empty-state"><h2>No plan for this week</h2><p class="sub">Past weeks aren't planned automatically.</p>
-        <button type="button" class="btn" data-act="plan">${icon('spark')}Plan this week</button></section>`;
-    }
+    if (!planned(k) || !weekCtx(k).gd.P.length) return emptyWeek(nav, k);
     const ctx = weekCtx(k), ev = weekEval(k), L = shopList(k);
     const over = ev.cost > S.budget;
-    const grp = (title, ids) => {
-      const cards = ids.map(g => mealCard(k, ctx, ev, g)).join('');
-      return cards ? `<h3 class="grp-title">${title}</h3>${cards}` : '';
-    };
     return `${nav}
       <div class="stats">
         <a class="stat" href="#/goals"><span class="stat-ic">${icon('target')}</span><b>${ev.met}/${ev.n}</b><small>goals met</small></a>
@@ -133,8 +140,8 @@ VIEWS.week = {
         <button type="button" class="btn small" data-act="plan">${icon('spark')}Re-plan</button></section>` : ''}
       ${prepCard(k, ev)}
       ${sectionTitle('This week’s meals', `<button type="button" class="link-btn" data-act="shuffle">${icon('shuffle')}Shuffle</button>`)}
-      <p class="hint">Tap a meal to swap it or change your serve. Swapped meals stay locked in when you shuffle.</p>
-      ${grp('Lunches', ['L1', 'L2'])}${grp('Breakfasts', ['B1', 'B2'])}${grp('Snacks', ['S1', 'S2'])}
+      <p class="hint">All made on prep day. Tap a meal to swap it or change your serve size; meals you swap stay locked in when you shuffle.</p>
+      ${GROUP_ORDER.map(g => mealCard(k, ctx, ev, g)).join('')}
       ${sectionTitle('Week at a glance')}
       ${glance(k, ev)}
       <p class="hint"><span class="dot-key" aria-hidden="true"></span>White dot = comes out of the freezer. Tap a day for details or to mark it as away.</p>
@@ -164,7 +171,7 @@ function mealSheet(k, gid) {
   const draw = () => {
     const w = weekRead(k), rid = w.g[gid], r = RBY[rid];
     const t = GROUPS[gid].t, offs = ctx.gd[gid];
-    const title = `${gid === 'L1' ? 'Prep lunches' : MEALS[t].many} · ${daysLabel(k, offs)}`;
+    const title = `${MEALS[t].many} · ${daysLabel(k, offs)}`;
     if (!r) return `${sheetHead(title)}<button type="button" class="btn wide" data-act="swap">${icon('swap')}Choose a recipe</button>`;
     const b = weekEval(k).bs.find(x => x.rid === rid);
     const m = portion(ctx, rid), auto = !S.por[rid];
@@ -225,7 +232,7 @@ function pickerSheet(k, gid) {
     if (PICK.time) list = list.filter(x => x.r.mins <= PICK.time);
     const sorts = { fit: (a, b) => a.ev.J - b.ev.J, cheap: (a, b) => a.serve - b.serve, quick: (a, b) => a.r.mins - b.r.mins, prot: (a, b) => b.prot - a.prot };
     list.sort(sorts[PICK.sort]);
-    return `${sheetHead(`Choose ${gid === 'L1' ? 'prep lunches' : MEALS[t].many.toLowerCase()}`, `For ${daysLabel(k, ctx.gd[gid])} · times are for the whole batch`)}
+    return `${sheetHead(`Choose ${MEALS[t].many.toLowerCase()}`, `For ${daysLabel(k, ctx.gd[gid])} · times are for the whole batch`)}
       ${chipRow(TIME_CHIPS, PICK.time, 'time', 'How long it takes')}
       ${seg([['fit', 'Best fit'], ['cheap', 'Cheapest'], ['quick', 'Quickest'], ['prot', 'Protein']], PICK.sort, 'sort', 'small')}
       <ul class="pick-list">${list.map(x => `<li><button type="button" class="pick${x.r.id === cur ? ' cur' : ''}" data-act="pick" data-rid="${x.r.id}">
@@ -277,12 +284,18 @@ function daySheet(k, o) {
   const draw = () => {
     const { meals, day } = dayMeals(k, o);
     const jobs = eveningJobs(k, o);
-    return `${sheetHead(fmtDay(day.key), day.o === 0 ? 'Prep day' : '')}
-      ${day.cheat ? `<p class="lead">${icon('pizza')} Cheat day — nothing planned. You can change your cheat day in Settings.</p>`
-        : `${meals.map(m => `<button type="button" class="today-row" data-act="open" data-rid="${m.b.rid}"><span class="tl-ic">${mealIcon(m.t)}</span>
+    const tonight = jobs.length ? `<div class="tonight"><h3>That evening</h3><ul class="jobs">${jobsHtml(k, jobs)}</ul></div>` : '';
+    let body;
+    if (day.cheat) body = `<p class="lead">${icon('pizza')} Cheat day — nothing planned. You can change your cheat day in Settings.</p>${tonight}`;
+    else if (!day.want) body = `<p class="lead">${day.o === 0 ? 'Prep day — you cook the week’s meals today.' : 'Not planned — no meals made for this day.'}</p>
+      <p class="sub">Choose which days get meals in Settings.</p>${tonight}`;
+    else {
+      body = `${meals.map(m => `<button type="button" class="today-row" data-act="open" data-rid="${m.b.rid}"><span class="tl-ic">${mealIcon(m.t)}</span>
           <span class="tl-main"><small>${MEALS[m.t].name}</small><b>${m.b.r.e} ${esc(m.b.r.n)}</b></span>${srcChip(m.s.src)}</button>`).join('')}
-        ${jobs.length ? `<div class="tonight"><h3>That evening</h3><ul class="jobs">${jobsHtml(k, jobs)}</ul></div>` : ''}
-        ${switchRow('away', 'I’m away this day', 'Leave it out of the plan and the shopping', day.skip)}`}`;
+        ${tonight}
+        ${switchRow('away', 'I’m away this day', 'Leave it out of this week’s plan and shopping', day.skip)}`;
+    }
+    return `${sheetHead(fmtDay(day.key), day.o === 0 ? 'Prep day' : '')}${body}`;
   };
   openSheet(draw(), {
     label: 'Day',

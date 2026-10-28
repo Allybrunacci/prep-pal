@@ -50,7 +50,7 @@ VIEWS.goals = {
     const k = viewWeek();
     ensurePlan(k);
     const nav = weekNav(k);
-    if (!planned(k)) return `${nav}<section class="card empty-state"><h2>No plan for this week</h2><button type="button" class="btn" data-act="plan">${icon('spark')}Plan this week</button></section>`;
+    if (!planned(k) || !weekCtx(k).gd.P.length) return emptyWeek(nav, k);
     const ev = weekEval(k), ctx = weekCtx(k);
     const p = S.prof, { t: day } = dailyTargets(p);
     const byN = {};

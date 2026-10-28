@@ -1,6 +1,6 @@
 /* Prep Pal — offline support. Network first so updates show straight away; the cache is the fallback.
    Only touches its own caches, so other apps on the same site keep theirs. */
-const CACHE = 'prep-pal-v1';
+const CACHE = 'prep-pal-v2';
 const SHELL = [
   './', './index.html', './app.css', './foods.js', './data.js', './core.js', './nutrition.js', './planner.js',
   './week.js', './recipes.js', './shop.js', './goals.js', './settings.js', './manifest.webmanifest',

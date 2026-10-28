@@ -61,7 +61,8 @@ function recipeSheet(rid) {
   const draw = () => {
     const m = portion(ctx, rid);
     const inWeek = weekEval(k).bs.find(b => b.rid === rid);
-    const batchN = inWeek ? inWeek.n : r.t === 'l' ? S.wk.lunches : 3;
+    const firstGroup = { b: 'B1', l: 'L1', s: 'S1' }[r.t];
+    const batchN = inWeek ? inWeek.n : ctx.gd[firstGroup].length || plannedDays(S.wk).length || 4;
     const mult = REC_MODE === 'std' ? 1 : REC_MODE === 'batch' ? m * batchN : m;
     const v = RN[rid];
     const { t: day } = dailyTargets(S.prof);
@@ -89,7 +90,7 @@ function recipeSheet(rid) {
       <h3 class="sh-title">Nutrition${REC_MODE === 'std' ? ' (standard serve)' : ' (your serve)'}</h3>
       <table class="nut-table"><thead><tr><th></th><th>Amount</th><th class="pct">of a day</th></tr></thead><tbody>${rows}</tbody></table>
       ${groups.length ? `<h3 class="sh-title">Use it ${daysBetween(curWeekKey(), k) === 0 ? 'this week' : `for ${fmtShort(k)}`}</h3>
-        <div class="use-row">${groups.map(g => `<button type="button" class="btn ghost small" data-act="use" data-g="${g}">${g === 'L1' ? 'Prep lunches' : MEALS[r.t].many} · ${daysLabel(k, ctx.gd[g])}</button>`).join('')}</div>` : ''}
+        <div class="use-row">${groups.map(g => `<button type="button" class="btn ghost small" data-act="use" data-g="${g}">${MEALS[r.t].many} · ${daysLabel(k, ctx.gd[g])}</button>`).join('')}</div>` : ''}
       <div class="btn-row">
         <button type="button" class="btn ghost" data-act="fav">${icon('star')}${S.fav.includes(rid) ? 'Unfavourite' : 'Favourite'}</button>
         <button type="button" class="btn ghost" data-act="hide">${icon('eye-off')}${S.hide.includes(rid) ? 'Suggest again' : 'Don’t suggest'}</button>

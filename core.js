@@ -1,7 +1,7 @@
 /* Prep Pal — core: helpers, dates, storage, UI kit and router */
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const STORE_KEY = 'prep-pal:v1';
 
 /* ---------- helpers ---------- */
@@ -60,14 +60,24 @@ function fmtRange(a, b) {
 /* ---------- state ---------- */
 const GROUP_IDS = ['L1', 'L2', 'B1', 'B2', 'S1', 'S2'];
 const DIETS = ['veg', 'nofish', 'df', 'gf', 'nf', 'ef'];
+const DEFAULT_DAYS = [0, 1, 2, 3];
+// Days that get meals: the ones you chose, minus the cheat day.
+const plannedDays = wk => wk.days.filter(d => d !== wk.cheat);
+// Weekday numbers as text, e.g. [0,1,2,3] -> "Mon–Thu", [0,2] -> "Mon & Wed".
+function weekdaysLabel(ds) {
+  const n = ds.map(d => DAYS[d]);
+  if (!n.length) return 'no days';
+  if (n.length >= 3 && ds.every((d, i) => !i || d === ds[i - 1] + 1)) return `${n[0]}–${n[n.length - 1]}`;
+  return n.length === 1 ? n[0] : `${n.slice(0, -1).join(', ')} & ${n[n.length - 1]}`;
+}
 
 function freshState() {
   return {
-    v: 1,
+    v: 2,
     created: today(),
     onboarded: false,
     prof: { sex: '', age: 0, cm: 0, kg: 0, act: 'active', goal: 'keep' },
-    wk: { prep: 6, cheat: 4, lunches: 4, bVar: 2, sVar: 2, share: 65, maxPrep: 120 },
+    wk: { prep: 6, cheat: 4, days: DEFAULT_DAYS.slice(), bVar: 1, lVar: 1, sVar: 1, share: 65, maxPrep: 120 },
     budget: 60,
     staples: true,
     diet: { veg: false, nofish: false, df: false, gf: false, nf: false, ef: false },
@@ -118,12 +128,23 @@ function migrate(d) {
   const w = d.wk && typeof d.wk === 'object' ? d.wk : {};
   s.wk.prep = [5, 6].includes(+w.prep) ? +w.prep : 6;
   s.wk.cheat = +w.cheat >= -1 && +w.cheat <= 6 && w.cheat !== '' && w.cheat != null ? Math.round(+w.cheat) : 4;
-  s.wk.lunches = clamp(Math.round(+w.lunches || 4), 2, 5);
-  s.wk.bVar = +w.bVar === 1 ? 1 : 2;
-  s.wk.sVar = +w.sVar === 1 ? 1 : 2;
+  // Version 1 planned every day except the cheat day, with two breakfasts and two snacks.
+  const v1 = !Array.isArray(w.days);
+  if (!v1) {
+    const days = Array.from(new Set(w.days.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6))).sort((a, b) => a - b);
+    if (days.length) s.wk.days = days;
+  }
+  if (!plannedDays(s.wk).length) s.wk.days = DEFAULT_DAYS.filter(n => n !== s.wk.cheat);
+  for (const key of ['bVar', 'lVar', 'sVar']) s.wk[key] = !v1 && +w[key] === 2 ? 2 : 1;
   s.wk.share = clamp(Math.round((+w.share || 65) / 5) * 5, 40, 90);
   s.wk.maxPrep = [60, 90, 120, 150, 180, 0].includes(+w.maxPrep) ? +w.maxPrep : 120;
   s.budget = clamp(Math.round(+d.budget || 60), 15, 400);
+  if (v1 && d.wk && s.onboarded) {
+    // The budget was for every day but the cheat day; scale it to the days now planned.
+    const before = 7 - (s.wk.cheat >= 0 ? 1 : 0);
+    s.budget = clamp(Math.round((s.budget * plannedDays(s.wk).length) / before / 5) * 5, 15, 400);
+    UPGRADED = true;
+  }
   s.staples = d.staples !== false;
   const dt = d.diet && typeof d.diet === 'object' ? d.diet : {};
   for (const k of DIETS) s.diet[k] = !!dt[k];
@@ -150,6 +171,7 @@ function migrate(d) {
 
 let S = freshState();
 let REV = 0;
+let UPGRADED = false;
 
 function load() {
   let raw = null;
@@ -434,7 +456,13 @@ function boot() {
     if (!SHEET && S.onboarded) render();
   });
   if (!S.onboarded) startOnboarding();
-  else { render(true); askPersist(); }
+  else {
+    const upgraded = UPGRADED;
+    if (upgraded) { UPGRADED = false; upgradePlans(); }
+    render(true);
+    askPersist();
+    if (upgraded) toast(`Updated: meals for ${weekdaysLabel(plannedDays(S.wk))}, one batch of each, all made on prep day.`, { ms: 7000 });
+  }
   registerSW();
 }
 

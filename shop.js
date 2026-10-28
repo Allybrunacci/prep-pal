@@ -11,7 +11,7 @@ VIEWS.shop = {
     const k = viewWeek();
     ensurePlan(k);
     const nav = weekNav(k);
-    if (!planned(k)) return `${nav}<section class="card empty-state"><h2>No plan for this week</h2><p class="sub">Plan the week first and the list appears here.</p><button type="button" class="btn" data-act="plan">${icon('spark')}Plan this week</button></section>`;
+    if (!planned(k) || !weekCtx(k).gd.P.length) return emptyWeek(nav, k);
     const L = shopList(k);
     const byAisle = {};
     for (const it of L.buy) (byAisle[it.f.a] || (byAisle[it.f.a] = [])).push(it);

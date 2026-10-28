@@ -146,6 +146,8 @@ body.onboarding .tabbar, body.onboarding .topbar { visibility: hidden; }
 .g-day.now { border-color: var(--mint); }
 .g-day.cheat { background: transparent; border-style: dashed; }
 .g-day.away { background: transparent; opacity: .7; }
+.g-day.off { background: transparent; border-style: dashed; min-height: 40px; padding-top: 4px; padding-bottom: 4px; }
+.g-day.off .g-name { color: var(--muted); }
 .g-name { width: 70px; font-weight: 800; display: flex; flex-direction: column; line-height: 1.1; }
 .g-name i { font-style: normal; font-size: 11px; color: var(--mint); text-transform: uppercase; letter-spacing: .05em; }
 .g-meals { display: flex; gap: 8px; }
@@ -164,6 +166,8 @@ body.onboarding .tabbar, body.onboarding .topbar { visibility: hidden; }
 .chip.on { background: var(--deep); border-color: var(--mint); }
 .chips.small .chip { min-height: 32px; font-size: 13px; padding: 0 10px; }
 .chip .ic { width: 14px; height: 14px; }
+.chip.cheat { border-style: dashed; color: var(--muted); cursor: default; }
+.seg.mini { margin: 0; flex: none; width: 150px; }
 .search { display: block; margin: 8px 0 12px; }
 .search input, .field input { width: 100%; min-height: 46px; border-radius: 14px; border: 1.5px solid var(--line2); background: var(--raised); padding: 0 14px; color: var(--paper); }
 .search input::placeholder, .field input::placeholder { color: rgba(168, 191, 178, .7); }
@@ -255,6 +259,8 @@ body.onboarding .tabbar, body.onboarding .topbar { visibility: hidden; }
 .unit-in input { padding-right: 38px; }
 .unit-in span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 13px; pointer-events: none; }
 .field-inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0; }
+.field-inline.tight { margin: 6px 0; }
+.field-note { color: var(--muted); font-size: 13px; }
 .field-inline > span { display: flex; flex-direction: column; }
 .field-inline small { color: var(--muted); font-size: 13px; }
 .radio-list { display: grid; gap: 6px; }

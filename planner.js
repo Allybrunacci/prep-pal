@@ -2,8 +2,8 @@
 'use strict';
 
 const GROUPS = {
-  L1: { t: 'l', name: 'Prep lunches' },
-  L2: { t: 'l', name: 'Other lunches' },
+  L1: { t: 'l', name: 'Lunches' },
+  L2: { t: 'l', name: 'Lunches' },
   B1: { t: 'b', name: 'Breakfasts' },
   B2: { t: 'b', name: 'Breakfasts' },
   S1: { t: 's', name: 'Snacks' },
@@ -22,23 +22,22 @@ function focusWeekKey() {
 }
 const viewWeek = () => UI.week || (UI.week = focusWeekKey());
 
+// want = a day you plan meals for (Settings); on = also not marked away this week.
 function weekDays(k) {
-  const w = weekRead(k);
+  const w = weekRead(k), plan = plannedDays(S.wk);
   return Array.from({ length: 7 }, (_, o) => {
     const key = addDays(k, o), di = dayIdx(key);
-    const cheat = di === S.wk.cheat, skip = !!w.skip[o];
-    return { o, key, di, cheat, skip, on: !cheat && !skip };
+    const cheat = di === S.wk.cheat, skip = !!w.skip[o], want = plan.includes(di);
+    return { o, key, di, cheat, skip, want, on: want && !skip };
   });
 }
 
-// Which days each group covers (offsets from the prep day).
+// Which days each group covers (offsets from the prep day). One recipe per meal covers every
+// planned day; two recipes split the days in half.
 function groupDays(days) {
   const P = days.filter(d => d.on).map(d => d.o);
-  const L1 = P.filter(o => o >= 1).slice(0, S.wk.lunches);
-  const L2 = P.filter(o => !L1.includes(o));
-  const half = a => { const h = Math.ceil(a.length / 2); return [a.slice(0, h), a.slice(h)]; };
-  const [B1, B2] = S.wk.bVar === 1 ? [P, []] : half(P);
-  const [S1, S2] = S.wk.sVar === 1 ? [P, []] : half(P);
+  const split = v => { if (v !== 2) return [P, []]; const h = Math.ceil(P.length / 2); return [P.slice(0, h), P.slice(h)]; };
+  const [L1, L2] = split(S.wk.lVar), [B1, B2] = split(S.wk.bVar), [S1, S2] = split(S.wk.sVar);
   return { L1, L2, B1, B2, S1, S2, P };
 }
 
@@ -204,10 +203,12 @@ function evalPlan(ctx, sel, full) {
   const B = Math.max(1, S.budget);
   J += (10 * cost) / B + (60 * Math.max(0, cost - B)) / B;
   if (S.wk.maxPrep && tm.prep > S.wk.maxPrep) J += (tm.prep - S.wk.maxPrep) / 5;
-  J += tm.extra.length * 0.6 + sum(tm.extra.map(e => e.hands)) / 20;
-  if (sel.B1 && sel.B1 === sel.B2) J += 1.2;
-  if (sel.S1 && sel.S1 === sel.S2) J += 1.2;
-  if (sel.L1 && sel.L1 === sel.L2) J += 1.5;
+  // Everything should be made on prep day; a mid-week top-up only if nothing else fits.
+  J += tm.extra.length * 2 + sum(tm.extra.map(e => e.hands)) / 20;
+  const same = (a, b) => sel[a] && sel[a] === sel[b] && ctx.gd[a].length && ctx.gd[b].length;
+  if (same('B1', 'B2')) J += 1.2;
+  if (same('S1', 'S2')) J += 1.2;
+  if (same('L1', 'L2')) J += 1.5;
   for (const gid of GROUP_IDS) {
     const rid = sel[gid];
     if (!rid || !ctx.gd[gid].length) continue;
@@ -249,8 +250,36 @@ function autoPlan(k, opts = {}) {
   const extra = sel => sum(gids.map(g => (steer[g] && steer[g] === sel[g] ? 2.5 : 0)));
   BUY_CACHE = {};
   const score = sel => evalPlan(ctx, sel) + extra(sel);
-  const rand = rng(hashStr(k) + (opts.seed || 0) * 7919);
-  let best = null, bestJ = Infinity;
+  const space = gids.reduce((t, g) => t * cand[g].length, 1);
+  const found = space <= 6000 ? searchAll(gids, cand, score) : searchLocal(gids, cand, score, rng(hashStr(k) + (opts.seed || 0) * 7919));
+  BUY_CACHE = null;
+  const best = found.sel;
+  w.g = { ...w.g, ...best };
+  for (const g of GROUP_IDS) if (!ctx.gd[g].length && !w.lock[g]) delete w.g[g];
+  if (opts.seed != null) w.seed = opts.seed;
+  save();
+  return best;
+}
+
+// Few meals to choose (e.g. one breakfast, one lunch and one snack): try every combination.
+function searchAll(gids, cand, score) {
+  let best = {}, bestJ = Infinity;
+  const sel = {};
+  const walk = i => {
+    if (i === gids.length) {
+      const j = score(sel);
+      if (j < bestJ - 1e-9) { bestJ = j; best = { ...sel }; }
+      return;
+    }
+    for (const rid of cand[gids[i]]) { sel[gids[i]] = rid; walk(i + 1); }
+  };
+  walk(0);
+  return { sel: best, J: bestJ };
+}
+
+// Many meals: random restarts with single swaps, then pairs of swaps that single swaps can miss.
+function searchLocal(gids, cand, score, rand) {
+  let best = {}, bestJ = Infinity;
   for (let rs = 0; rs < 12; rs++) {
     const sel = {};
     for (const g of gids) sel[g] = cand[g][Math.floor(rand() * cand[g].length)];
@@ -272,7 +301,6 @@ function autoPlan(k, opts = {}) {
     }
     if (J < bestJ - 1e-9) { bestJ = J; best = { ...sel }; }
   }
-  // Try changing two groups at once, which single swaps can miss.
   let improved = true, rounds = 0;
   while (improved && rounds++ < 3) {
     improved = false;
@@ -292,13 +320,15 @@ function autoPlan(k, opts = {}) {
       }
     }
   }
-  BUY_CACHE = null;
-  for (const g of GROUP_IDS) if (!ctx.gd[g].length && !w.lock[g]) delete best[g];
-  w.g = { ...w.g, ...best };
-  for (const g of GROUP_IDS) if (!ctx.gd[g].length && !w.lock[g]) delete w.g[g];
-  if (opts.seed != null) w.seed = opts.seed;
+  return { sel: best, J: bestJ };
+}
+// After an update that changes the week's shape, re-plan the weeks that haven't started. Locked meals stay.
+function upgradePlans() {
+  const t = today();
+  let n = 0;
+  for (const k of Object.keys(S.weeks)) if (k > t && planned(k)) { autoPlan(k); n++; }
   save();
-  return best;
+  return n;
 }
 
 // Plans the week the first time you look at it.
