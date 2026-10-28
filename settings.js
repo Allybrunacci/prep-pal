@@ -118,7 +118,7 @@ function drawOnboarding() {
   if (OB.step === 0) {
     body = `<div class="ob-hero"><img src="icons/icon.svg" alt="" width="96" height="96"><h1>Prep Pal</h1><p class="lead">Cook once, eat well all week.</p></div>
       <ul class="ob-points">
-        <li>${icon('chef')}<span><b>Meal prep made simple.</b> Breakfast, lunch and a snack for the days you choose, all cooked in one go on prep day.</span></li>
+        <li>${icon('grip')}<span><b>Drag and drop your week.</b> Pick a breakfast, lunch and snack from the recipe bank — each one is cooked in one go on prep day.</span></li>
         <li>${icon('clock')}<span><b>Pick meals by time.</b> See how long each one takes and keep prep day short.</span></li>
         <li>${icon('target')}<span><b>Hit your nutrient goals</b> across the week, sized to your body and training.</span></li>
         <li>${icon('cart')}<span><b>On budget,</b> with the shopping list done for you in aisle order.</span></li>
@@ -138,7 +138,7 @@ function drawOnboarding() {
       <div class="field"><span>Any diet needs?</span><div class="chips">${DIETS.map(d => `<button type="button" class="chip${S.diet[d] ? ' on' : ''}" aria-pressed="${S.diet[d]}" data-act="diet" data-v="${d}">${DIET_NAMES[d]}</button>`).join('')}</div></div>
       <div class="field-inline"><span><b>Weekly budget</b><small>For these meals only. Suggested ${money0(sug)} from your energy needs.</small></span>${stepper('budget', money0(S.budget), 'Weekly budget')}</div>
       <p class="tiny">${icon('info')}Prices are typical Australian supermarket estimates. You can set your own on the shopping list.</p>
-      <div class="btn-row">${back}<button type="button" class="btn" data-act="next">${icon('spark')}Plan my week</button></div>`;
+      <div class="btn-row">${back}<button type="button" class="btn" data-act="next">Start planning</button></div>`;
   }
   root.innerHTML = `<div class="ob-card" role="dialog" aria-modal="true" aria-label="Set up Prep Pal">${OB.step ? dots : ''}${body}</div>`;
 }
@@ -151,12 +151,11 @@ function finishOnboarding() {
   root.innerHTML = '';
   document.body.classList.remove('onboarding');
   UI.week = null;
-  const k = viewWeek();
-  autoPlan(k);
-  location.hash = '#/week';
+  UI.bank = null;
+  location.hash = '#/plan';
   render(true);
   askPersist();
-  setTimeout(() => { confetti(); toast(`Your week is planned — prep day is ${fmtDay(k)}.`); }, 250);
+  setTimeout(() => toast('All set! Drag recipes onto your meals, or tap Fill for me.', { ms: 5000 }), 250);
 }
 
 /* ---------- settings ---------- */
@@ -181,7 +180,7 @@ function openSettings() {
       <div class="field"><span>Ingredients to avoid</span><div class="chips small">${Object.keys(FOODS).filter(f => !FOODS[f].staple).sort((a, b) => FOODS[a].n.localeCompare(FOODS[b].n)).map(f => `<button type="button" class="chip${S.avoid.includes(f) ? ' on' : ''}" aria-pressed="${S.avoid.includes(f)}" data-act="avoid" data-v="${f}">${esc(FOODS[f].n)}</button>`).join('')}</div></div>
       ${S.hide.length ? `<div class="field"><span>Recipes you’ve hidden</span><div class="chips small">${S.hide.map(r => `<button type="button" class="chip on" data-act="unhide" data-v="${r}">${esc(RBY[r].n)} ${icon('x')}</button>`).join('')}</div></div>` : ''}
       <h3 class="sh-title">App</h3>
-      ${switchRow('fx', 'Celebrations', 'Confetti when the shop is done', S.fx)}
+      ${switchRow('fx', 'Celebrations', 'Confetti when your week is planned, shopped and prepped', S.fx)}
       <div class="btn-row"><button type="button" class="btn ghost" data-act="export">${icon('down')}Save a backup</button>
         <label class="btn ghost file-btn">${icon('up')}Restore<input type="file" accept="application/json,.json" name="import" hidden></label></div>
       <button type="button" class="btn ghost danger wide" data-act="reset">Start over</button>
@@ -211,27 +210,16 @@ function openSettings() {
       if (['age', 'cm', 'kg'].includes(n)) sh.set(draw());
     },
     onClose: () => {
-      if (!SET_DIRTY) { render(); return; }
+      const dirty = SET_DIRTY;
       SET_DIRTY = false;
-      replanFuture();
+      REV++;
+      render();
+      if (!dirty) return;
+      const k = viewWeek(), g = weekRead(k).g;
+      const misfit = slotsOf(weekCtx(k)).filter(s => g[s] && !allowed(RBY[g[s]]));
+      if (misfit.length) toast(`${plural(misfit.length, 'meal')} this week ${misfit.length === 1 ? 'doesn’t' : 'don’t'} fit your new settings — swap ${misfit.length === 1 ? 'it' : 'them'} on the Plan tab.`, { ms: 6000 });
     },
   });
-}
-
-// New settings apply to weeks that haven't started yet. Meals you locked in stay, unless they no longer fit your diet.
-function replanFuture() {
-  REV++;
-  const t = today();
-  let n = 0;
-  const unlockMisfits = k => {
-    const w = weekEdit(k);
-    for (const g of GROUP_IDS) if (w.lock[g] && w.g[g] && !allowed(RBY[w.g[g]])) delete w.lock[g];
-  };
-  for (const k of Object.keys(S.weeks)) if (k > t && planned(k)) { unlockMisfits(k); autoPlan(k); n++; }
-  const f = viewWeek();
-  if (f > t && !planned(f)) { autoPlan(f); n++; }
-  render();
-  if (n) toast('Plan updated for your new settings.');
 }
 
 function exportBackup() {

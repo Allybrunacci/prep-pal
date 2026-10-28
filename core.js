@@ -1,7 +1,7 @@
 /* Prep Pal — core: helpers, dates, storage, UI kit and router */
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const STORE_KEY = 'prep-pal:v1';
 
 /* ---------- helpers ---------- */
@@ -92,7 +92,7 @@ function freshState() {
   };
 }
 
-const newWeek = () => ({ g: {}, lock: {}, skip: {}, got: {}, have: {}, stock: {}, seed: 0 });
+const newWeek = () => ({ g: {}, skip: {}, got: {}, have: {}, stock: {}, done: {}, seed: 0 });
 const EMPTY_WEEK = Object.freeze(newWeek());
 const RBY = {};
 for (const r of RECIPES) RBY[r.id] = r;
@@ -102,10 +102,9 @@ function normWeek(w) {
   if (!w || typeof w !== 'object') return o;
   const g = w.g && typeof w.g === 'object' ? w.g : {};
   for (const id of GROUP_IDS) if (RBY[g[id]]) o.g[id] = g[id];
-  const lock = w.lock && typeof w.lock === 'object' ? w.lock : {};
-  for (const id of GROUP_IDS) if (lock[id] && o.g[id]) o.lock[id] = 1;
   if (w.skip && typeof w.skip === 'object') for (const [d, v] of Object.entries(w.skip)) { const n = +d; if (v && n >= 0 && n <= 6) o.skip[n] = 1; }
   for (const f of ['got', 'have']) if (w[f] && typeof w[f] === 'object') for (const [fid, v] of Object.entries(w[f])) if (v && FOODS[fid]) o[f][fid] = 1;
+  if (w.done && typeof w.done === 'object') for (const [rid, v] of Object.entries(w.done)) if (v && RBY[rid]) o.done[rid] = 1;
   if (w.stock && typeof w.stock === 'object') {
     for (const [fid, v] of Object.entries(w.stock)) if (FOODS[fid] && isFinite(+v) && +v >= 0) o.stock[fid] = clamp(Math.round(+v), 0, 50000);
   }
@@ -263,7 +262,7 @@ function toast(msg, opts = {}) {
 /* ---------- celebrations ---------- */
 const reduceMotion = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 const fxOn = () => S.fx && !reduceMotion();
-const PALETTE = ['#1B7D4F', '#066839', '#6FD39F', '#F1F7F3', '#0F5132'];
+const PALETTE = ['#B9375E', '#FFE0E9', '#CEDDBB', '#BE9A60', '#434343'];
 
 function confetti(n = 60) {
   if (!fxOn()) return;
@@ -363,12 +362,15 @@ const sectionTitle = (title, extra) => `<div class="section-title"><h2>${title}<
 
 /* ---------- router ---------- */
 const VIEWS = {};
-const UI = { week: null, recType: 'l', recTime: 0, recQ: '', prepOpen: false };
+// bank: meal type shown in the recipe bank; time/sort/q: bank filters.
+const UI = { week: null, bank: null, time: 0, sort: 'fit', q: '' };
+const ROUTE_ALIAS = { week: 'plan', recipes: 'plan' };
 let CUR = null;
 
 function routeName() {
-  const r = (location.hash || '').replace(/^#\/?/, '').split(/[?/]/)[0];
-  return VIEWS[r] ? r : 'week';
+  let r = (location.hash || '').replace(/^#\/?/, '').split(/[?/]/)[0];
+  r = ROUTE_ALIAS[r] || r;
+  return VIEWS[r] ? r : 'plan';
 }
 
 function render(fresh) {
@@ -391,7 +393,7 @@ function render(fresh) {
     t.classList.toggle('active', on);
     if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
   }
-  document.title = name === 'week' ? 'Prep Pal' : `${v.title} · Prep Pal`;
+  document.title = name === 'plan' ? 'Prep Pal' : `${v.title} · Prep Pal`;
 }
 
 const GLOBAL_ACT = {
@@ -406,6 +408,9 @@ function onViewClick(e) {
   if (fn) { e.preventDefault(); fn(a, e); }
 }
 
+// Re-draw for outside changes (new day, another tab) unless you're mid-way through something.
+const busy = () => !!SHEET || DRAG_ACTIVE();
+
 let DAY = null;
 function checkDay() {
   const t = today();
@@ -413,7 +418,7 @@ function checkDay() {
   DAY = t;
   UI.week = null;
   REV++;
-  if (!SHEET && S.onboarded) render();
+  if (!busy() && S.onboarded) render();
 }
 
 function registerSW() {
@@ -453,8 +458,9 @@ function boot() {
   window.addEventListener('storage', e => {
     if (e.key !== STORE_KEY) return;
     replaceState(load());
-    if (!SHEET && S.onboarded) render();
+    if (!busy() && S.onboarded) render();
   });
+  initDrag();
   if (!S.onboarded) startOnboarding();
   else {
     const upgraded = UPGRADED;

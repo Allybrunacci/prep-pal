@@ -12,9 +12,7 @@ function findFix(k, n) {
   return memo(`fix:${k}:${n}`, () => {
     const ctx = weekCtx(k), w = weekRead(k), base = weekEval(k);
     let best = null;
-    BUY_CACHE = {};
-    for (const gid of GROUP_IDS) {
-      if (!ctx.gd[gid].length) continue;
+    for (const gid of slotsOf(ctx)) {
       for (const r of RECIPES) {
         if (r.t !== GROUPS[gid].t || r.id === w.g[gid] || !allowed(r)) continue;
         const ev = evalPlan(ctx, { ...w.g, [gid]: r.id }, true);
@@ -23,7 +21,6 @@ function findFix(k, n) {
         if (!best || ev.met > best.ev.met || (ev.met === best.ev.met && ev.J < best.ev.J)) best = { gid, rid: r.id, ev };
       }
     }
-    BUY_CACHE = null;
     return best;
   });
 }
@@ -48,17 +45,31 @@ VIEWS.goals = {
   title: 'Goals',
   render() {
     const k = viewWeek();
-    ensurePlan(k);
     const nav = weekNav(k);
     if (!planned(k) || !weekCtx(k).gd.P.length) return emptyWeek(nav, k);
     const ev = weekEval(k), ctx = weekCtx(k);
+    const missing = slotsOf(ctx).filter(g => !weekRead(k).g[g]).map(g => MEALS[GROUPS[g].t].name.toLowerCase());
     const p = S.prof, { t: day } = dailyTargets(p);
     const byN = {};
     for (const g of ev.goals) byN[g.n] = g;
     const misses = ev.goals.filter(g => !g.ok);
     const ringPct = ev.n ? ev.met / ev.n : 0;
     const C = 2 * Math.PI * 42;
-    const fixes = misses.map(g => ({ g, fix: findFix(k, g.n) }));
+    const fixes = [];
+    for (const g of misses) {
+      const fix = findFix(k, g.n);
+      const key = fix ? `${fix.gid}:${fix.rid}` : `none:${g.n}`;
+      let e = fixes.find(x => x.key === key);
+      if (!e) fixes.push(e = { key, fix, gs: [] });
+      e.gs.push(g);
+    }
+    const names = gs => { const n = gs.map(g => NUT_INFO[g.n].n.toLowerCase()); return n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}` : n[0]; };
+    const fixText = gs => {
+      const lows = gs.filter(g => g.state !== 'high'), highs = gs.filter(g => g.state === 'high');
+      const t = `${lows.length ? `short on ${names(lows)}` : ''}${lows.length && highs.length ? '; ' : ''}${highs.length ? `over on ${names(highs)}` : ''}`;
+      const sources = lows.length === 1 && !highs.length && NUT_FOODS[lows[0].n] ? ` Good sources: ${NUT_FOODS[lows[0].n]}.` : '';
+      return `<b>${t.charAt(0).toUpperCase() + t.slice(1)}.</b>${sources}`;
+    };
     return `${nav}
       <section class="card goal-head">
         <svg class="ring" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="42" class="ring-bg"/><circle cx="50" cy="50" r="42" class="ring-fg" style="stroke-dasharray:${C};stroke-dashoffset:${C * (1 - ringPct)}"/></svg>
@@ -66,8 +77,9 @@ VIEWS.goals = {
         <div class="gh-text"><h2>${misses.length ? `${plural(misses.length, 'goal')} to work on` : 'Every goal met'}</h2>
           <p class="sub">Over ${plural(ctx.gd.P.length, 'planned day')}: breakfast, lunch and a snack.</p></div>
       </section>
-      ${fixes.length ? `<section class="card fixes">${fixes.map(({ g, fix }) => `<div class="fix"><p><b>${NUT_INFO[g.n].n} is ${g.state === 'high' ? 'over' : 'short'}.</b> ${g.state === 'high' ? '' : `Good sources: ${NUT_FOODS[g.n] || 'a wider mix of foods'}.`}</p>
-        ${fix ? `<button type="button" class="btn small" data-act="fix" data-g="${fix.gid}" data-rid="${fix.rid}">${icon('swap')}Swap ${GROUPS[fix.gid].t === 'l' ? 'lunch' : MEALS[GROUPS[fix.gid].t].name.toLowerCase()} (${daysLabel(k, ctx.gd[fix.gid])}) to ${esc(RBY[fix.rid].n)}</button>` : '<p class="sub">No single swap fixes this — try a bigger serve or a different budget.</p>'}</div>`).join('')}</section>` : ''}
+      ${missing.length ? `<p class="tiny card-note">${icon('info')}<span>So far without a ${Array.from(new Set(missing)).join(' or ')} — <a href="#/plan">add one</a> to see the whole week.</span></p>` : ''}
+      ${fixes.length ? `<section class="card fixes">${fixes.map(({ gs, fix }) => `<div class="fix"><p>${fixText(gs)}</p>
+        ${fix ? `<button type="button" class="btn small" data-act="fix" data-g="${fix.gid}" data-rid="${fix.rid}">${icon('swap')}${weekRead(k).g[fix.gid] ? 'Swap' : 'Add'} ${MEALS[GROUPS[fix.gid].t].name.toLowerCase()}${slotsFor(ctx, GROUPS[fix.gid].t).length > 1 ? ` (${daysLabel(k, ctx.gd[fix.gid])})` : ''}: ${esc(RBY[fix.rid].n)}</button>` : '<p class="sub">No single swap fixes this — try a bigger serve or a different budget.</p>'}</div>`).join('')}</section>` : ''}
       ${GOAL_SECTIONS.map(([title, ns]) => `<h3 class="grp-title">${title}</h3><ul class="goal-list">${ns.map(n => goalBar(byN[n])).join('')}</ul>`).join('')}
       <section class="card profile-card">
         <div class="card-top"><h2>Your targets</h2><button type="button" class="link-btn" data-action="settings">${icon('edit')}Edit</button></div>
@@ -84,10 +96,10 @@ VIEWS.goals = {
   act: {
     fix: a => {
       const k = viewWeek(), w = weekEdit(k), gid = a.dataset.g;
-      const before = w.g[gid], wasLocked = !!w.lock[gid];
-      w.g[gid] = a.dataset.rid; w.lock[gid] = 1;
+      const before = w.g[gid];
+      w.g[gid] = a.dataset.rid;
       save(); render();
-      toast(`Swapped to ${esc(RBY[a.dataset.rid].n)}.`, { undo: () => { const x = weekEdit(k); x.g[gid] = before; if (!wasLocked) delete x.lock[gid]; save(); render(); } });
+      toast(`${before ? 'Swapped to' : 'Added'} ${esc(RBY[a.dataset.rid].n)}.`, { undo: () => { const x = weekEdit(k); if (before) x.g[gid] = before; else delete x.g[gid]; save(); render(); } });
     },
   },
 };

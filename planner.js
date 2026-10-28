@@ -15,7 +15,7 @@ const AISLES = ['Fruit & veg', 'Meat & fish', 'Dairy & eggs', 'Bakery', 'Pantry'
 /* ---------- weeks: each starts on the prep day ---------- */
 const weekKeyFor = k => addDays(k, -((dayIdx(k) - S.wk.prep + 7) % 7));
 const curWeekKey = () => weekKeyFor(today());
-const planned = k => !!(S.weeks[k] && Object.keys(S.weeks[k].g).length);
+const planned = k => !!(S.weeks[k] && slotsOf(weekCtx(k)).some(g => S.weeks[k].g[g]));
 function focusWeekKey() {
   const cur = curWeekKey();
   return daysBetween(cur, today()) >= 5 || !planned(cur) ? addDays(cur, 7) : cur;
@@ -130,12 +130,12 @@ function packsOf(fid) {
 const unitPrice = fid => memo('unit:' + fid, () => Math.min(...packsOf(fid).map(p => p.p / p.g)));
 const stapleFree = fid => !!(FOODS[fid].staple && S.staples);
 
-let BUY_CACHE = null;
-// Cheapest set of packs covering the amount (3% under is close enough).
+// Cheapest set of packs covering the amount (3% under is close enough). Cached until anything changes.
 function buyFor(fid, need) {
   if (need <= 0) return { cost: 0, grams: 0, items: [] };
   const key = fid + ':' + Math.round(need);
-  if (BUY_CACHE && key in BUY_CACHE) return BUY_CACHE[key];
+  const cache = memo('buy', () => ({}));
+  if (key in cache) return cache[key];
   const packs = packsOf(fid);
   const want = need * 0.97;
   let best = null;
@@ -158,7 +158,7 @@ function buyFor(fid, need) {
     counts[i] = 0;
   };
   go(0, 0);
-  if (BUY_CACHE) BUY_CACHE[key] = best;
+  cache[key] = best;
   return best;
 }
 
@@ -235,30 +235,48 @@ function rng(seed) {
 const hashStr = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 
 const candidates = (gid, all) => RECIPES.filter(r => r.t === GROUPS[gid].t && (all || allowed(r))).map(r => r.id);
+const choices = gid => { const c = candidates(gid); return c.length ? c : candidates(gid, true); };
 
-// Picks recipes for every unlocked group: goals first, then cost, prep time, top-ups and variety.
+// Meal slots that have days this week, and whether every one has a recipe.
+const slotsOf = ctx => GROUP_IDS.filter(g => ctx.gd[g].length);
+const isComplete = k => { const g = weekRead(k).g; return slotsOf(weekCtx(k)).every(s => g[s]); };
+
+// Picks recipes: goals first, then cost, prep time, top-ups and variety.
+// mode 'fill' keeps the recipes you've chosen and fills the empty meals; 'all' picks every meal again.
 function autoPlan(k, opts = {}) {
   const ctx = weekCtx(k);
   const w = weekEdit(k);
-  const gids = GROUP_IDS.filter(g => ctx.gd[g].length);
+  const keep = opts.mode !== 'all';
+  const gids = slotsOf(ctx);
   const cand = {};
-  for (const g of gids) {
-    cand[g] = w.lock[g] && w.g[g] ? [w.g[g]] : candidates(g);
-    if (!cand[g].length) cand[g] = candidates(g, true);
-  }
+  for (const g of gids) cand[g] = keep && w.g[g] ? [w.g[g]] : choices(g);
   const steer = opts.steer || {};
   const extra = sel => sum(gids.map(g => (steer[g] && steer[g] === sel[g] ? 2.5 : 0)));
-  BUY_CACHE = {};
   const score = sel => evalPlan(ctx, sel) + extra(sel);
   const space = gids.reduce((t, g) => t * cand[g].length, 1);
   const found = space <= 6000 ? searchAll(gids, cand, score) : searchLocal(gids, cand, score, rng(hashStr(k) + (opts.seed || 0) * 7919));
-  BUY_CACHE = null;
   const best = found.sel;
   w.g = { ...w.g, ...best };
-  for (const g of GROUP_IDS) if (!ctx.gd[g].length && !w.lock[g]) delete w.g[g];
   if (opts.seed != null) w.seed = opts.seed;
   save();
   return best;
+}
+
+// For the recipe bank: how well a recipe fits a meal slot, with the best picks for any other empty slots.
+// exact = every other slot already has your pick.
+function fitFor(k, gid, rid) {
+  return memo(`fit:${k}:${gid}:${rid}`, () => {
+    const ctx = weekCtx(k), mine = weekRead(k).g;
+    const base = { ...mine, [gid]: rid };
+    const open = slotsOf(ctx).filter(g => g !== gid && !mine[g]);
+    const cand = {};
+    let space = 1;
+    for (const g of open) { cand[g] = choices(g); space *= cand[g].length; }
+    if (space > 400) return null;
+    const found = searchAll(open, cand, sel => evalPlan(ctx, { ...base, ...sel }));
+    const ev = evalPlan(ctx, { ...base, ...found.sel }, true);
+    return { J: ev.J, met: ev.met, n: ev.n, cost: ev.cost, prep: ev.tm.prep, exact: !open.length };
+  });
 }
 
 // Few meals to choose (e.g. one breakfast, one lunch and one snack): try every combination.
@@ -322,20 +340,21 @@ function searchLocal(gids, cand, score, rand) {
   }
   return { sel: best, J: bestJ };
 }
-// After an update that changes the week's shape, re-plan the weeks that haven't started. Locked meals stay.
+
+// After an update that changes the week's shape, plan again the weeks that haven't started
+// (their meals were picked automatically by the older version).
 function upgradePlans() {
   const t = today();
   let n = 0;
-  for (const k of Object.keys(S.weeks)) if (k > t && planned(k)) { autoPlan(k); n++; }
+  for (const k of Object.keys(S.weeks)) {
+    if (k <= t || !planned(k)) continue;
+    const w = weekEdit(k), ctx = weekCtx(k);
+    for (const g of GROUP_IDS) if (!ctx.gd[g].length) delete w.g[g];
+    autoPlan(k, { mode: 'all' });
+    n++;
+  }
   save();
   return n;
-}
-
-// Plans the week the first time you look at it.
-function ensurePlan(k) {
-  if (!S.onboarded || planned(k)) return;
-  if (daysBetween(curWeekKey(), k) < 0) return;
-  autoPlan(k);
 }
 
 /* ---------- shopping ---------- */
@@ -403,7 +422,7 @@ function shopText(k) {
 /* ---------- days ---------- */
 // What you eat on a day of the week and where it comes from.
 function dayMeals(k, o) {
-  const ev = weekEval(k), w = weekRead(k), out = [];
+  const ev = weekEval(k), out = [];
   for (const t of ['b', 'l', 's']) {
     for (const b of ev.bs) {
       if (b.r.t !== t) continue;
@@ -411,7 +430,7 @@ function dayMeals(k, o) {
       if (s) { out.push({ t, b, s, gid: b.groups.find(g => weekCtx(k).gd[g].includes(o)) }); break; }
     }
   }
-  return { meals: out, day: weekCtx(k).days[o], lock: w.lock };
+  return { meals: out, day: weekCtx(k).days[o] };
 }
 
 // Jobs for the evening of day offset o: thaw tomorrow's frozen meals and make anything due tomorrow.

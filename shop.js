@@ -9,10 +9,10 @@ VIEWS.shop = {
   title: 'Shop',
   render() {
     const k = viewWeek();
-    ensurePlan(k);
     const nav = weekNav(k);
     if (!planned(k) || !weekCtx(k).gd.P.length) return emptyWeek(nav, k);
     const L = shopList(k);
+    const missing = slotsOf(weekCtx(k)).filter(g => !weekRead(k).g[g]).length;
     const byAisle = {};
     for (const it of L.buy) (byAisle[it.f.a] || (byAisle[it.f.a] = [])).push(it);
     const have = L.items.filter(i => i.have && !i.staple);
@@ -20,6 +20,7 @@ VIEWS.shop = {
     const pct = L.buy.length ? Math.round((L.done / L.buy.length) * 100) : 100;
     const over = L.food > S.budget;
     return `${nav}
+      ${missing ? `<p class="tiny card-note">${icon('info')}<span>${plural(missing, 'meal')} not chosen yet, so this list isn’t complete — <a href="#/plan">finish your plan</a>.</span></p>` : ''}
       <section class="card shop-sum">
         <div class="ss-top"><div><small>This shop</small><b class="big-num">${money(L.shop)}</b></div>
           <div class="ss-bud${over ? ' warn' : ''}"><small>Food for the week</small><b>${money(L.food)}</b><small>${over ? `${money(L.food - S.budget)} over` : `${money(S.budget - L.food)} under`} your ${money0(S.budget)} budget</small></div></div>
